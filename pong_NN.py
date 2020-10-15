@@ -5,34 +5,50 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def Act(X):
+
+
+
+def Act_H(X):
     """
-    Activation function,  Currently modified tanh(x) to cover (0,1)
+    Hidden Layer activation function
+    """
+    return np.tanh(X)
+
+
+def d_Act_H(X):
+    """
+    Derivative of hidden layer activation function
+    """
+    return 1 / np.cosh(X)**2
+
+
+
+
+def Act_O(X):
+    """
+    Output layer Activation function,  Currently modified tanh(x) to cover (0,1)
     """
     return (np.tanh(X)+1) / 2
 
 
-def d_Act(X):
+def d_Act_O(X):
     """
-    Returns derivative of the Activation function
+    Returns derivative of the output layer Activation function
     """
-    return 1 / (np.cosh(2*X) + 1)
+    return 1 / (2*np.cosh(X)**2)
 
 
 
 
-def X_norm(X):
+def Vec_norm(X):
     """
     Returns a normalized X input vector centered around 1
     """
     # m=4 hardcoded into 1/m = 0.25
     mu = 0.25 * sum(X)
-
     sigma_2 = 0.25 * sum([(x-mu)**2 for x in X])
-
-    X_norm = np.array([x/sigma_2 for x in X])
-
-    return X_norm
+    Vec_norm = np.array([x/sigma_2 for x in X])
+    return Vec_norm
     
 
 
@@ -111,7 +127,7 @@ class NeuralNetwork:
         self.outputLayer = np.array(rawData[self.K])
 
         self.hiddenBias = np.array(rawData[self.K+1])
-        self.outputBias = rawData[self.K+2]
+        self.outputBias = rawData[self.K+2][0]
 
         f.close()
 
@@ -123,15 +139,15 @@ class NeuralNetwork:
         """
         Preform feedForward and return the output value Y
         """
-        X = X_norm(X)
-        H_out = np.array([Act(sum(X*node)+bias) for node, bias in zip(self.hiddenLayer,self.hiddenBias)])
-        Y_out = Act(sum(H_out*self.outputLayer) + self.outputBias)
+        X = Vec_norm(X)
+        H_out = np.array([Act_H(sum(X*node)+bias) for node, bias in zip(self.hiddenLayer,self.hiddenBias)])
+        Y_out = Act_O(sum(H_out*self.outputLayer) + self.outputBias)
         return Y_out
 
 
 
 
-    def train(self, trainingData, trial_num, epochs, learn_rate, batch_size):
+    def train(self, trainingData, batch_size, trial_num, learn_rate, epochs):
         """
         Implement backpropagation to train the network on the trainingData.
         Loop through the entire data set on each epoch.
@@ -142,39 +158,46 @@ class NeuralNetwork:
         widgets_inner = [progressbar.Percentage(), progressbar.Bar()]
         print('\n\nTraining Progress ---\n')
         bar = progressbar.ProgressBar(widgets=widgets_inner, maxval=epochs).start()
+        bar.update(1)
+
+        amountData = len(trainingData)
 
         for i in range(epochs):
             # Shuffle trainingData each epoch and split Inputs and Answers
             X_inputs, Y_trues = [], []
-            np.random.shuffle(trainingData)
-            for line in trainingData[:batch_size]:
+
+            # Select a random slice of the training data
+            i_data = np.random.randint(0, amountData-batch_size)
+
+            for line in trainingData[i_data : i_data+batch_size]:
                 X_inputs.append(np.array(line[:-1]))
                 Y_trues.append(line[-1])
 
             for X, Y_true in zip(X_inputs, Y_trues):
 
                 # Try normalizing input vector
-                X = X_norm(X)
+                # Can also try normalizing the Hidden output before final layer
+                X = Vec_norm(X)
 
                 # Preform feedforward
                 # Need pre-activated values to calculate derivatives
                 H_vals = np.array([sum(X*node) for node in self.hiddenLayer] + self.hiddenBias)
-                H_out = Act(H_vals)
+                H_out = Act_H(H_vals)
 
                 Y_vals = sum(H_out*self.outputLayer) + self.outputBias
-                Y_out = Act(Y_vals)
+                Y_out = Act_O(Y_vals)
 
                 # Calculate partial derivatives
-                dL_dY = -2 * (Y_true - Y_out)
+                dL_dY = -(Y_true - Y_out)
 
                 # Output neuron
-                dY_dO = H_out * d_Act(Y_vals)
-                dY_dW = self.outputLayer * d_Act(Y_vals)
-                dY_db = d_Act(Y_vals)
+                dY_dO = H_out * d_Act_O(Y_vals)         #not sure if this should be d_act_O or _H
+                dY_dW = self.outputLayer * d_Act_O(Y_vals)
+                dY_db = d_Act_O(Y_vals)
 
                 # Hidden neurons
-                dW_dH = np.array([X*d_Act(H_vals[i]) for i in range(len(H_vals))])
-                dW_db = d_Act(H_vals)
+                dW_dH = np.array([X*d_Act_H(H_vals[i]) for i in range(len(H_vals))])
+                dW_db = d_Act_H(H_vals)
 
                 # Update weights and biases
                 for j in range(len(self.hiddenLayer)):
@@ -195,17 +218,19 @@ class NeuralNetwork:
             # Watching the error it tends to jump around
             if current_RMSE < best_RMSE:
                 best_RMSE = current_RMSE
-                self.save_weights(str(trial_num) + '_weights_Best.txt')
+                self.save_weights('Trial ' + str(trial_num) + '_weights_Best.txt')
 
-            self.save_weights(str(trial_num) + '_weights.txt')
+            self.save_weights('Trial ' + str(trial_num) + '_weights.txt')
 
-        plt.figure()
-        plt.plot(list(range(i+1)), store_RMSE)
-        plt.title(str(self.K) + ' Neurons, Learning Rate = ' + str(learn_rate))
-        plt.xlabel('Epochs')
-        plt.ylabel('RMSE')
-        plt.savefig('Trial ' + str(trial_num) + ' RMSE over Training Epochs')
-        plt.close()
+
+            if (i+1) % 2 == 0:
+                plt.figure()
+                plt.plot(list(range(i+1)), store_RMSE)
+                plt.title(str(self.K) + ' Neurons, Learning Rate = ' + str(learn_rate))
+                plt.xlabel('Epochs')
+                plt.ylabel('RMSE')
+                plt.savefig('Trial ' + str(trial_num) + ' RMSE over Training Epochs')
+                plt.close()
 
 
         bar.finish()
